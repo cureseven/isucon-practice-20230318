@@ -14,9 +14,12 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
+	_ "net/http/pprof"
+
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/sessions"
 	"github.com/jmoiron/sqlx"
@@ -206,6 +209,10 @@ func init() {
 }
 
 func main() {
+	go func() {
+		log.Fatal(http.ListenAndServe(":6060", nil))
+	}()
+
 	e := echo.New()
 	e.Debug = true
 	e.Logger.SetLevel(log.DEBUG)
@@ -251,6 +258,8 @@ func main() {
 		e.Logger.Fatalf("missing: POST_ISUCONDITION_TARGET_BASE_URL")
 		return
 	}
+
+	go processConditionQueue()
 
 	serverPort := fmt.Sprintf(":%v", getEnv("SERVER_APP_PORT", "3000"))
 	e.Logger.Fatal(e.Start(serverPort))
@@ -779,7 +788,9 @@ func generateIsuGraphResponse(tx *sqlx.Tx, jiaIsuUUID string, graphDate time.Tim
 	var startTimeInThisHour time.Time
 	var condition IsuCondition
 
-	rows, err := tx.Queryx("SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY `timestamp` ASC", jiaIsuUUID)
+	rows, err := tx.Queryx("SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ?"+
+		" AND ? <= timestamp AND timestamp < ?"+
+		" ORDER BY `timestamp` ASC", jiaIsuUUID, graphDate, graphDate.Add(24*time.Hour))
 	if err != nil {
 		return nil, fmt.Errorf("db error: %v", err)
 	}
@@ -1135,11 +1146,16 @@ func getTrend(c echo.Context) error {
 	return c.JSON(http.StatusOK, res)
 }
 
+var conditionQueue = struct {
+	sync.Mutex
+	Data []IsuCondition
+}{}
+
 // POST /api/condition/:jia_isu_uuid
 // ISUからのコンディションを受け取る
 func postIsuCondition(c echo.Context) error {
 	// TODO: 一定割合リクエストを落としてしのぐようにしたが、本来は全量さばけるようにすべき
-	dropProbability := 0.9
+	dropProbability := 0.4
 	if rand.Float64() <= dropProbability {
 		c.Logger().Warnf("drop post isu condition request")
 		return c.NoContent(http.StatusAccepted)
@@ -1166,7 +1182,7 @@ func postIsuCondition(c echo.Context) error {
 	defer tx.Rollback()
 
 	var count int
-	err = tx.Get(&count, "SELECT COUNT(*) FROM `isu` WHERE `jia_isu_uuid` = ?", jiaIsuUUID)
+	err = tx.Get(&count, "SELECT COUNT(*) FROM `isu` WHERE `jia_isu_uuid` = ? LIMIT 1", jiaIsuUUID)
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
@@ -1175,32 +1191,69 @@ func postIsuCondition(c echo.Context) error {
 		return c.String(http.StatusNotFound, "not found: isu")
 	}
 
-	for _, cond := range req {
-		timestamp := time.Unix(cond.Timestamp, 0)
-
-		if !isValidConditionFormat(cond.Condition) {
-			return c.String(http.StatusBadRequest, "bad request body")
-		}
-
-		_, err = tx.Exec(
-			"INSERT INTO `isu_condition`"+
-				"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
-				"	VALUES (?, ?, ?, ?, ?)",
-			jiaIsuUUID, timestamp, cond.IsSitting, cond.Condition, cond.Message)
-		if err != nil {
-			c.Logger().Errorf("db error: %v", err)
-			return c.NoContent(http.StatusInternalServerError)
-		}
-
-	}
-
 	err = tx.Commit()
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
+	conditionQueue.Lock()
+	for _, cond := range req {
+		timestamp := time.Unix(cond.Timestamp, 0)
+		if !isValidConditionFormat(cond.Condition) {
+			conditionQueue.Unlock()
+			return c.String(http.StatusBadRequest, "bad request body")
+		}
+		conditionQueue.Data = append(conditionQueue.Data, IsuCondition{
+			JIAIsuUUID: jiaIsuUUID,
+			Timestamp:  timestamp,
+			IsSitting:  cond.IsSitting,
+			Condition:  cond.Condition,
+			Message:    cond.Message,
+		})
+	}
+	conditionQueue.Unlock()
+
 	return c.NoContent(http.StatusAccepted)
+}
+
+func processConditionQueue() {
+	for {
+		time.Sleep(200 * time.Millisecond) // 一定間隔で実行
+
+		// キューの内容をローカル変数にコピー
+		conditionQueue.Lock()
+		localQueue := make([]IsuCondition, len(conditionQueue.Data))
+		copy(localQueue, conditionQueue.Data)
+		conditionQueue.Data = make([]IsuCondition, 0) // キューをクリア
+		conditionQueue.Unlock()
+
+		if len(localQueue) == 0 {
+			continue
+		}
+
+		tx, err := db.Beginx()
+		if err == nil {
+			_, err = tx.NamedExec(
+				"INSERT INTO `isu_condition`"+
+					"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
+					"	VALUES (:jia_isu_uuid, :timestamp, :is_sitting, :condition, :message)",
+				localQueue)
+			if err == nil {
+				err = tx.Commit()
+			}
+			if err != nil {
+				tx.Rollback()
+			}
+		}
+
+		// エラーがあれば、失敗した条件を再度キューに追加
+		if err != nil {
+			conditionQueue.Lock()
+			conditionQueue.Data = append(conditionQueue.Data, localQueue...)
+			conditionQueue.Unlock()
+		}
+	}
 }
 
 // ISUのコンディションの文字列がcsv形式になっているか検証
