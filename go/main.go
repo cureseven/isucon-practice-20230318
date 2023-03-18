@@ -1248,6 +1248,7 @@ func processConditionQueue() {
 
 			// キューから取得したデータを CSV に書き込む
 			for _, condition := range localQueue {
+				fmt.Println("test:", condition.Level)
 				record := []string{
 					condition.JIAIsuUUID,
 					condition.Timestamp.Format(time.RFC3339),
