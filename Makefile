@@ -4,15 +4,18 @@ gogo: stop-services build truncate-logs start-services
 
 build:
 	cd go && go build -o isucondition
+	scp go/isucondition isucon-app3:~/webapp/go
 
 stop-services:
 	sudo systemctl stop nginx
 	sudo systemctl stop isucondition.go.service
+	ssh isucon-app3 "sudo systemctl stop isucondition.go.service"
 	ssh isucon-app2 "sudo systemctl stop mysql"
 
 start-services:
 	ssh isucon-app2 "sudo systemctl start mysql"
 	sleep 5
+	ssh isucon-app3 "sudo systemctl start isucondition.go.service"
 	sudo systemctl start isucondition.go.service
 	sudo systemctl start nginx
 
