@@ -1223,7 +1223,7 @@ func postIsuCondition(c echo.Context) error {
 
 func processConditionQueue() {
 	for {
-		time.Sleep(200 * time.Millisecond) // 一定間隔で実行
+		time.Sleep(500 * time.Millisecond) // 一定間隔で実行
 
 		// キューの内容をローカル変数にコピー
 		conditionQueue.Lock()
