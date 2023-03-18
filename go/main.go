@@ -782,7 +782,9 @@ func generateIsuGraphResponse(tx *sqlx.Tx, jiaIsuUUID string, graphDate time.Tim
 	var startTimeInThisHour time.Time
 	var condition IsuCondition
 
-	rows, err := tx.Queryx("SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY `timestamp` ASC", jiaIsuUUID)
+	rows, err := tx.Queryx("SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ?"+
+		" AND ? <= timestamp AND timestamp < ?"+
+		" ORDER BY `timestamp` ASC", jiaIsuUUID, graphDate, graphDate.Add(24*time.Hour))
 	if err != nil {
 		return nil, fmt.Errorf("db error: %v", err)
 	}
@@ -1214,13 +1216,19 @@ func processConditionQueue() {
 		time.Sleep(500 * time.Millisecond) // 一定間隔で実行
 
 		conditionQueue.Lock()
+		localQueue := make([]IsuCondition, len(conditionQueue.Data))
+		copy(localQueue, conditionQueue.Data)
+		conditionQueue.Data = make([]IsuCondition, 0) // キューをクリア
+		conditionQueue.Unlock()
+
 		if len(conditionQueue.Data) == 0 {
-			conditionQueue.Unlock()
 			continue
 		}
 
 		tx, err := db.Beginx()
 		if err != nil {
+			conditionQueue.Lock()
+			conditionQueue.Data = append(conditionQueue.Data, localQueue...)
 			conditionQueue.Unlock()
 			continue
 		}
@@ -1229,20 +1237,21 @@ func processConditionQueue() {
 			"INSERT INTO `isu_condition`"+
 				"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
 				"	VALUES (:jia_isu_uuid, :timestamp, :is_sitting, :condition, :message)",
-			conditionQueue.Data)
+			localQueue)
 		if err != nil {
+			conditionQueue.Lock()
+			conditionQueue.Data = append(conditionQueue.Data, localQueue...)
 			conditionQueue.Unlock()
 			continue
 		}
 
 		err = tx.Commit()
 		if err != nil {
+			conditionQueue.Lock()
+			conditionQueue.Data = append(conditionQueue.Data, localQueue...)
 			conditionQueue.Unlock()
 			continue
 		}
-
-		conditionQueue.Data = conditionQueue.Data[:0] // キューをクリア
-		conditionQueue.Unlock()
 	}
 }
 
