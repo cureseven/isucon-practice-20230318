@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
@@ -50,6 +51,9 @@ var (
 	jiaJWTSigningKey *ecdsa.PublicKey
 
 	postIsuConditionTargetBaseURL string // JIAへのactivate時に登録する，ISUがconditionを送る先のURL
+
+	conditionMap     = map[int]IsuCondition{}
+	conditionMapLock = sync.RWMutex{}
 )
 
 type Config struct {
@@ -1185,21 +1189,30 @@ func postIsuCondition(c echo.Context) error {
 	}
 	defer tx.Rollback()
 
+	err2, done := insertIsuCondition(c, err, tx, jiaIsuUUID, req)
+	if done {
+		return err2
+	}
+
+	return c.NoContent(http.StatusAccepted)
+}
+
+func insertIsuCondition(c echo.Context, err error, tx *sqlx.Tx, jiaIsuUUID string, req []PostIsuConditionRequest) (error, bool) {
 	var count int
 	err = tx.Get(&count, "SELECT COUNT(*) FROM `isu` WHERE `jia_isu_uuid` = ?", jiaIsuUUID)
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
+		return c.NoContent(http.StatusInternalServerError), true
 	}
 	if count == 0 {
-		return c.String(http.StatusNotFound, "not found: isu")
+		return c.String(http.StatusNotFound, "not found: isu"), true
 	}
 
 	for _, cond := range req {
 		timestamp := time.Unix(cond.Timestamp, 0)
 
 		if !isValidConditionFormat(cond.Condition) {
-			return c.String(http.StatusBadRequest, "bad request body")
+			return c.String(http.StatusBadRequest, "bad request body"), true
 		}
 
 		_, err = tx.Exec(
@@ -1209,7 +1222,7 @@ func postIsuCondition(c echo.Context) error {
 			jiaIsuUUID, timestamp, cond.IsSitting, cond.Condition, cond.Message)
 		if err != nil {
 			c.Logger().Errorf("db error: %v", err)
-			return c.NoContent(http.StatusInternalServerError)
+			return c.NoContent(http.StatusInternalServerError), true
 		}
 
 	}
@@ -1217,10 +1230,9 @@ func postIsuCondition(c echo.Context) error {
 	err = tx.Commit()
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
+		return c.NoContent(http.StatusInternalServerError), true
 	}
-
-	return c.NoContent(http.StatusAccepted)
+	return nil, false
 }
 
 // ISUのコンディションの文字列がcsv形式になっているか検証
