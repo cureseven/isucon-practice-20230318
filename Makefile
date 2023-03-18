@@ -25,3 +25,6 @@ truncate-logs:
 
 kataribe:
 	sudo cat /var/log/nginx/access.log | ./kataribe -conf kataribe.toml | grep --after-context 20 "Top 20 Sort By Total"
+
+bench:
+	ssh bench-server "cd ~/bench && ./bench -all-addresses isucondition-1.t.isucon.dev -target isucondition-1.t.isucon.dev -tls -jia-service-url http://172.31.44.190:5000"
