@@ -1217,8 +1217,8 @@ func postIsuCondition(c echo.Context) error {
 }
 
 const (
-	minQueueSize = 500 // キューがこのサイズに達したときに処理を開始する
-	numWorkers   = 8   // 並列処理のためのゴルーチン数
+	minQueueSize = 50 // キューがこのサイズに達したときに処理を開始する
+	numWorkers   = 8  // 並列処理のためのゴルーチン数
 )
 
 func processConditionQueue() {
