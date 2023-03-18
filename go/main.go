@@ -1077,28 +1077,48 @@ func calculateConditionLevel(condition string) (string, error) {
 // ISUの性格毎の最新のコンディション情報を返す
 func getTrend(c echo.Context) error {
 	data := make(map[string]map[string][]*TrendCondition)
-	err := db.Select(&data, `
-		  SELECT
-			`+"`character`"+`,
-			IF(condition LIKE 'info%', `+"`info`"+`,
-			  IF(condition LIKE 'warning%', `+"`warning`"+`, `+"`critical`"+`
-		)) AS condition,
-			jia_isu_uuid,
-			id,
-			UNIX_TIMESTAMP(timestamp) AS timestamp
-		  FROM (
-			SELECT 
-			  *,
-			  ROW_NUMBER() OVER (PARTITION BY jia_isu_uuid ORDER BY timestamp DESC) AS row_num
-			FROM isu_condition
-		  ) AS isu_cond
-		  JOIN isu ON isu.jia_isu_uuid = isu_cond.jia_isu_uuid
-		  WHERE row_num = 1;
-	`)
-
+	characterList := []string{}
+	err := db.Select(&characterList, "SELECT DISTINCT `character` FROM `isu`")
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
+	}
+
+	for _, chara := range characterList {
+		isuList := []Isu{}
+		err = db.Select(&isuList, "SELECT * FROM `isu` WHERE `character` = ?", chara)
+		if err != nil {
+			c.Logger().Errorf("db error: %v", err)
+			return c.NoContent(http.StatusInternalServerError)
+		}
+
+		for _, isu := range isuList {
+			condList := []*IsuCondition{}
+			err = db.Select(&condList,
+				"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY timestamp DESC LIMIT 1",
+				isu.JIAIsuUUID,
+			)
+			if err != nil {
+				c.Logger().Errorf("db error: %v", err)
+				return c.NoContent(http.StatusInternalServerError)
+			}
+			if len(condList) == 0 {
+				continue
+			}
+			conditionLevel, err := calculateConditionLevel(condList[0].Condition)
+			if err != nil {
+				c.Logger().Error(err)
+				return c.NoContent(http.StatusInternalServerError)
+			}
+			trendCond := &TrendCondition{
+				ID:        isu.ID,
+				Timestamp: condList[0].Timestamp.Unix(),
+			}
+			if _, ok := data[chara]; !ok {
+				data[chara] = make(map[string][]*TrendCondition)
+			}
+			data[chara][conditionLevel] = append(data[chara][conditionLevel], trendCond)
+		}
 	}
 
 	res := []TrendResponse{}
