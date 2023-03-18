@@ -1,0 +1,6 @@
+/sql/1_InitData.sql
+/frontend/src/components
+frontend/public/assets/*
+/public/assets/*
+frontend/src/pages/*
+ec256-public.pem
