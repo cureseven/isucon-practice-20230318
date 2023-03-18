@@ -1073,92 +1073,66 @@ func calculateConditionLevel(condition string) (string, error) {
 	return conditionLevel, nil
 }
 
-type IsuWithLatestCondition struct {
-	ID         int64        `db:"id"`
-	Name       string       `db:"name"`
-	JIAIsuUUID string       `db:"jia_isu_uuid"`
-	Character  string       `db:"character"`
-	LatestTime sql.NullTime `db:"latest_time"`
-	Condition  string       `db:"condition"`
-	Timestamp  time.Time    `db:"timestamp"`
-}
-
 // GET /api/trend
 // ISUの性格毎の最新のコンディション情報を返す
 func getTrend(c echo.Context) error {
 	data := make(map[string]map[string][]*TrendCondition)
-
-	// First query to retrieve all distinct characters in isu table.
-	var characterList []string
+	characterList := []string{}
 	err := db.Select(&characterList, "SELECT DISTINCT `character` FROM `isu`")
 	if err != nil {
-		c.Logger().Errorf("failed to select characters: %v", err)
+		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	// Query to retrieve data per each character found before.
-	query, args, err := sqlx.In(
-		"SELECT * FROM `isu` WHERE `character` IN (?)",
-		characterList,
-	)
-	if err != nil {
-		c.Logger().Errorf("could not generate query with IN clause: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
-	}
-	isuList := []Isu{}
-	err = db.Select(&isuList, query, args...)
-	if err != nil {
-		c.Logger().Errorf("failed to select isu data: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
-	}
-
-	// Mapping data retrieved for calculations and further processing.
-	trendData := make(map[string]map[string][]*TrendCondition)
-	for _, isu := range isuList {
-
-		condList := []*IsuCondition{}
-		err = db.Select(&condList,
-			"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY timestamp DESC LIMIT 1",
-			isu.JIAIsuUUID,
-		)
+	for _, chara := range characterList {
+		isuList := []Isu{}
+		err = db.Select(&isuList, "SELECT * FROM `isu` WHERE `character` = ?", chara)
 		if err != nil {
 			c.Logger().Errorf("db error: %v", err)
 			return c.NoContent(http.StatusInternalServerError)
 		}
-		if len(condList) == 0 {
-			continue
+
+		for _, isu := range isuList {
+			condList := []*IsuCondition{}
+			err = db.Select(&condList,
+				"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY timestamp DESC LIMIT 1",
+				isu.JIAIsuUUID,
+			)
+			if err != nil {
+				c.Logger().Errorf("db error: %v", err)
+				return c.NoContent(http.StatusInternalServerError)
+			}
+			if len(condList) == 0 {
+				continue
+			}
+			conditionLevel, err := calculateConditionLevel(condList[0].Condition)
+			if err != nil {
+				c.Logger().Error(err)
+				return c.NoContent(http.StatusInternalServerError)
+			}
+			trendCond := &TrendCondition{
+				ID:        isu.ID,
+				Timestamp: condList[0].Timestamp.Unix(),
+			}
+			if _, ok := data[chara]; !ok {
+				data[chara] = make(map[string][]*TrendCondition)
+			}
+			data[chara][conditionLevel] = append(data[chara][conditionLevel], trendCond)
 		}
-		conditionLevel, err := calculateConditionLevel(condList[0].Condition)
-		if err != nil {
-			c.Logger().Error(err)
-			return c.NoContent(http.StatusInternalServerError)
-		}
-		trendCond := &TrendCondition{
-			ID:        isu.ID,
-			Timestamp: condList[0].Timestamp.Unix(),
-		}
-		if _, ok := trendData[isu.Character]; !ok {
-			trendData[isu.Character] = make(map[string][]*TrendCondition)
-		}
-		trendData[isu.Character][conditionLevel] = append(trendData[isu.Character][conditionLevel], trendCond)
 	}
 
-	// Map the processed data before into the final structure.
-	for chara, trend := range trendData {
+	res := []TrendResponse{}
+	for chara, trend := range data {
 		t := TrendResponse{
 			Character: chara,
 			Info:      trend["info"],
 			Warning:   trend["warning"],
 			Critical:  trend["critical"],
 		}
-		data[chara] = map[string][]*TrendCondition{
-			"info":     t.Info,
-			"warning":  t.Warning,
-			"critical": t.Critical,
-		}
+		res = append(res, t)
 	}
 
-	return c.JSON(http.StatusOK, data)
+	return c.JSON(http.StatusOK, res)
 }
 
 // POST /api/condition/:jia_isu_uuid
