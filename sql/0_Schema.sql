@@ -28,7 +28,6 @@ CREATE TABLE `isu_condition` (
 
 CREATE INDEX idx_jia_isu_uuid_and_timestamp_desc ON isu_condition (jia_isu_uuid, `timestamp`);
 
-
 CREATE TABLE `user` (
   `jia_user_id` VARCHAR(255) PRIMARY KEY,
   `created_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6)
