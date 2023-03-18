@@ -189,7 +189,7 @@ func NewMySQLConnectionEnv() *MySQLConnectionEnv {
 }
 
 func (mc *MySQLConnectionEnv) ConnectDB() (*sqlx.DB, error) {
-	dsn := fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?parseTime=true&loc=Asia%%2FTokyo", mc.User, mc.Password, mc.Host, mc.Port, mc.DBName)
+	dsn := fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?parseTime=true&loc=Asia%%2FTokyo&interpolateParams=true", mc.User, mc.Password, mc.Host, mc.Port, mc.DBName)
 	return sqlx.Open("mysql", dsn)
 }
 
@@ -1211,7 +1211,7 @@ func postIsuCondition(c echo.Context) error {
 
 func processConditionQueue() {
 	for {
-		time.Sleep(800 * time.Millisecond) // 一定間隔で実行
+		time.Sleep(500 * time.Millisecond) // 一定間隔で実行
 
 		conditionQueue.Lock()
 		if len(conditionQueue.Data) == 0 {
