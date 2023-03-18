@@ -1016,13 +1016,13 @@ func getIsuConditionsFromDB(db *sqlx.DB, jiaIsuUUID string, endTime time.Time, c
 	limit int, isuName string) ([]*GetIsuConditionResponse, error) {
 
 	conditionLevelArray := []string{}
-	var query string
-	var params []interface{}
 	for level, _ := range conditionLevel {
 		conditionLevelArray = append(conditionLevelArray, level)
 	}
 
 	conditions := []IsuCondition{}
+	var query string
+	var params []interface{}
 	var err error
 
 	if startTime.IsZero() {
@@ -1034,7 +1034,7 @@ func getIsuConditionsFromDB(db *sqlx.DB, jiaIsuUUID string, endTime time.Time, c
 			jiaIsuUUID, endTime, conditionLevelArray, limit,
 		)
 	} else {
-		err = db.Select(&conditions,
+		query, params, err = sqlx.In(
 			"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ?"+
 				"	AND `timestamp` < ?"+
 				"	AND ? <= `timestamp`"+
@@ -1046,7 +1046,6 @@ func getIsuConditionsFromDB(db *sqlx.DB, jiaIsuUUID string, endTime time.Time, c
 	if err != nil {
 		return nil, fmt.Errorf("db error: %v", err)
 	}
-
 	err = db.Select(&conditions, db.Rebind(query), params...)
 	if err != nil {
 		return nil, err
@@ -1063,12 +1062,7 @@ func getIsuConditionsFromDB(db *sqlx.DB, jiaIsuUUID string, endTime time.Time, c
 			ConditionLevel: c.Level,
 			Message:        c.Message,
 		}
-
 		conditionsResponse = append(conditionsResponse, &data)
-	}
-
-	if len(conditionsResponse) > limit {
-		conditionsResponse = conditionsResponse[:limit]
 	}
 
 	return conditionsResponse, nil
