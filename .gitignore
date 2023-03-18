@@ -4,3 +4,5 @@ frontend/public/assets/*
 /public/assets/*
 frontend/src/pages/*
 ec256-public.pem
+kataribe
+kataribe.toml
