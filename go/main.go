@@ -1229,6 +1229,7 @@ func processConditionQueue() {
 		if err != nil {
 			conditionQueue.Lock()
 			conditionQueue.Data = append(conditionQueue.Data, localQueue...)
+			tx.Rollback()
 			conditionQueue.Unlock()
 			continue
 		}
@@ -1240,6 +1241,7 @@ func processConditionQueue() {
 			localQueue)
 		if err != nil {
 			conditionQueue.Lock()
+			tx.Rollback()
 			conditionQueue.Data = append(conditionQueue.Data, localQueue...)
 			conditionQueue.Unlock()
 			continue
@@ -1248,6 +1250,7 @@ func processConditionQueue() {
 		err = tx.Commit()
 		if err != nil {
 			conditionQueue.Lock()
+			tx.Rollback()
 			conditionQueue.Data = append(conditionQueue.Data, localQueue...)
 			conditionQueue.Unlock()
 			continue
