@@ -1216,14 +1216,21 @@ func postIsuCondition(c echo.Context) error {
 	return c.NoContent(http.StatusAccepted)
 }
 
+const (
+	minQueueSize = 500 // キューがこのサイズに達したときに処理を開始する
+	numWorkers   = 8   // 並列処理のためのゴルーチン数
+)
+
 func processConditionQueue() {
 	// キュー処理用のゴルーチンを作成
 	worker := func() {
 		for {
-			time.Sleep(500 * time.Millisecond) // 一定間隔で実行
-
 			// キューの内容をローカル変数にコピー
 			conditionQueue.Lock()
+			if len(conditionQueue.Data) < minQueueSize {
+				conditionQueue.Unlock()
+				continue
+			}
 			localQueue := make([]IsuCondition, len(conditionQueue.Data))
 			copy(localQueue, conditionQueue.Data)
 			conditionQueue.Data = make([]IsuCondition, 0) // キューをクリア
@@ -1277,9 +1284,6 @@ func processConditionQueue() {
 			}
 		}
 	}
-
-	// 並列処理のためのゴルーチン数
-	numWorkers := 4
 
 	// ゴルーチンを並列で実行
 	for i := 0; i < numWorkers; i++ {
