@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
-	"github.com/felixge/fgprof"
 	_ "net/http/pprof"
 
 	"github.com/go-sql-driver/mysql"
@@ -210,9 +209,8 @@ func init() {
 }
 
 func main() {
-	http.DefaultServeMux.Handle("/debug/fgprof", fgprof.Handler())
 	go func() {
-		log.Println(http.ListenAndServe(":6060", nil))
+		log.Fatal(http.ListenAndServe(":6060", nil))
 	}()
 
 	e := echo.New()
