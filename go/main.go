@@ -51,7 +51,7 @@ var (
 
 	postIsuConditionTargetBaseURL string // JIAへのactivate時に登録する，ISUがconditionを送る先のURL
 
-	conditionsMemory = []IsuConditionForInsert{} // キーはJIAIsuUUID
+	conditionsMemory = []IsuConditionForInsert{}
 	conditionsLock   = sync.RWMutex{}
 )
 
@@ -267,15 +267,15 @@ func main() {
 	serverPort := fmt.Sprintf(":%v", getEnv("SERVER_APP_PORT", "3000"))
 	e.Logger.Fatal(e.Start(serverPort))
 
-	//go func() {
-	//	ticker := time.NewTicker(time.Millisecond * 500)
-	//	for {
-	//		select {
-	//		case <-ticker.C:
-	//			go BulkInsertIsuCondition(1000)
-	//		}
-	//	}
-	//}()
+	go func() {
+		ticker := time.NewTicker(time.Millisecond * 500)
+		for {
+			select {
+			case <-ticker.C:
+				go BulkInsertIsuCondition(1000)
+			}
+		}
+	}()
 }
 
 func getSession(r *http.Request) (*sessions.Session, error) {
@@ -1187,7 +1187,7 @@ func postIsuCondition(c echo.Context) error {
 	}
 	defer tx.Rollback()
 
-	err2, done := insertIsuConditionToDB(c, err, tx, jiaIsuUUID, req)
+	err2, done := insertIsuConditionToMemory(c, err, tx, jiaIsuUUID, req)
 	if done {
 		return err2
 	}
