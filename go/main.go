@@ -1214,36 +1214,39 @@ func postIsuCondition(c echo.Context) error {
 func processConditionQueue() {
 	for {
 		time.Sleep(500 * time.Millisecond) // 一定間隔で実行
+
+		// キューの内容をローカル変数にコピー
 		conditionQueue.Lock()
-		if len(conditionQueue.Data) == 0 {
-			conditionQueue.Unlock()
+		localQueue := make([]IsuCondition, len(conditionQueue.Data))
+		copy(localQueue, conditionQueue.Data)
+		conditionQueue.Data = make([]IsuCondition, 0) // キューをクリア
+		conditionQueue.Unlock()
+
+		if len(localQueue) == 0 {
 			continue
 		}
 
 		tx, err := db.Beginx()
-		if err != nil {
-			conditionQueue.Unlock()
-			continue
+		if err == nil {
+			_, err = tx.NamedExec(
+				"INSERT INTO `isu_condition`"+
+					"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
+					"	VALUES (:jia_isu_uuid, :timestamp, :is_sitting, :condition, :message)",
+				localQueue)
+			if err == nil {
+				err = tx.Commit()
+			}
+			if err != nil {
+				tx.Rollback()
+			}
 		}
 
-		_, err = tx.NamedExec(
-			"INSERT INTO `isu_condition`"+
-				"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
-				"	VALUES (:jia_isu_uuid, :timestamp, :is_sitting, :condition, :message)",
-			conditionQueue.Data)
+		// エラーがあれば、失敗した条件を再度キューに追加
 		if err != nil {
+			conditionQueue.Lock()
+			conditionQueue.Data = append(conditionQueue.Data, localQueue...)
 			conditionQueue.Unlock()
-			continue
 		}
-
-		err = tx.Commit()
-		if err != nil {
-			conditionQueue.Unlock()
-			continue
-		}
-
-		conditionQueue.Data = make([]IsuCondition, 0) // キューをクリア
-		conditionQueue.Unlock()
 	}
 }
 
