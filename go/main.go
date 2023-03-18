@@ -1147,7 +1147,7 @@ var conditionQueue = struct {
 // ISUからのコンディションを受け取る
 func postIsuCondition(c echo.Context) error {
 	// TODO: 一定割合リクエストを落としてしのぐようにしたが、本来は全量さばけるようにすべき
-	dropProbability := 0.5
+	dropProbability := 0.4
 	if rand.Float64() <= dropProbability {
 		c.Logger().Warnf("drop post isu condition request")
 		return c.NoContent(http.StatusAccepted)
@@ -1211,7 +1211,7 @@ func postIsuCondition(c echo.Context) error {
 
 func processConditionQueue() {
 	for {
-		time.Sleep(1 * time.Second) // 一定間隔で実行
+		time.Sleep(800 * time.Millisecond) // 一定間隔で実行
 
 		conditionQueue.Lock()
 		if len(conditionQueue.Data) == 0 {
