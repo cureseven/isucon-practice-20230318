@@ -1247,10 +1247,16 @@ func processConditionQueue() {
 
 			// キューから取得したデータを CSV に書き込む
 			for _, condition := range localQueue {
+				var isSittingInt int
+				if condition.IsSitting {
+					isSittingInt = 1
+				} else {
+					isSittingInt = 0
+				}
 				record := []string{
 					condition.JIAIsuUUID,
 					condition.Timestamp.Format(time.RFC3339),
-					strconv.FormatBool(condition.IsSitting),
+					strconv.Itoa(isSittingInt),
 					condition.Condition,
 					condition.Message,
 					condition.Level,
