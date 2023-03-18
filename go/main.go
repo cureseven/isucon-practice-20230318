@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"database/sql"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1232,26 +1233,41 @@ func processConditionQueue() {
 				continue
 			}
 
-			tx, err := db.Beginx()
-			if err == nil {
-				_, err = tx.NamedExec(
-					"INSERT INTO `isu_condition`"+
-						"   (`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`, `level`)"+
-						"   VALUES (:jia_isu_uuid, :timestamp, :is_sitting, :condition, :message, :level)",
-					localQueue)
-				if err == nil {
-					err = tx.Commit()
+			// 一時的な CSV ファイルを作成
+			tmpfile, err := os.CreateTemp("", "isu_condition_*.csv")
+			if err != nil {
+				log.Printf("Temporary file creation failed: %v", err)
+				continue
+			}
+			defer os.Remove(tmpfile.Name())
+			defer tmpfile.Close()
+
+			// CSV ライターを作成
+			csvWriter := csv.NewWriter(tmpfile)
+
+			// キューから取得したデータを CSV に書き込む
+			for _, condition := range localQueue {
+				record := []string{
+					condition.JIAIsuUUID,
+					condition.Timestamp.Format(time.RFC3339),
+					strconv.FormatBool(condition.IsSitting),
+					condition.Condition,
+					condition.Message,
+					condition.Level,
 				}
-				if err != nil {
-					tx.Rollback()
+				if err := csvWriter.Write(record); err != nil {
+					log.Printf("CSV write error: %v", err)
+					break
 				}
 			}
 
-			// エラーがあれば、失敗した条件を再度キューに追加
-			if err != nil {
-				conditionQueue.Lock()
-				conditionQueue.Data = append(conditionQueue.Data, localQueue...)
-				conditionQueue.Unlock()
+			// CSV ライターをフラッシュ
+			csvWriter.Flush()
+
+			// LOAD DATA INFILE でデータを MySQL にインポート
+			query := fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE `isu_condition` FIELDS TERMINATED BY ',' ENCLOSED BY '\"' LINES TERMINATED BY '\\n' (`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`, `level`)", tmpfile.Name())
+			if _, err = db.Exec(query); err != nil {
+				log.Printf("LOAD DATA INFILE error: %v", err)
 			}
 		}
 	}
