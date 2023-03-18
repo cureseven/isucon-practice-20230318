@@ -94,11 +94,11 @@ type IsuCondition struct {
 }
 
 type IsuConditionForInsert struct {
-	JIAIsuUUID string
-	Timestamp  time.Time
-	IsSitting  bool
-	Condition  string
-	Message    string
+	JIAIsuUUID string    `db:"jia_isu_uuid"`
+	Timestamp  time.Time `db:"timestamp"`
+	IsSitting  bool      `db:"is_sitting"`
+	Condition  string    `db:"condition"`
+	Message    string    `db:"message"`
 }
 
 type MySQLConnectionEnv struct {
@@ -1284,8 +1284,13 @@ func BulkInsertIsuCondition(limit int) (error, bool) {
 			"	VALUES (:jia_isu_uuid, :timestamp, :is_sitting, :condition, :message)",
 		records)
 	if err != nil {
+		tx.Rollback()
 		log.Fatalf("failed to read file: %v", err)
 		return err, true
+	}
+	err = tx.Commit()
+	if err != nil {
+		return err, false
 	}
 	conditionsLock.Lock()
 	conditionsMemory = insertRecords
