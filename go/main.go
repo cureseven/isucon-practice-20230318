@@ -1225,6 +1225,7 @@ func processConditionQueue() {
 	// キュー処理用のゴルーチンを作成
 	worker := func() {
 		for {
+			time.Sleep(500 * time.Millisecond)
 			// キューの内容をローカル変数にコピー
 			conditionQueue.Lock()
 			if len(conditionQueue.Data) < minQueueSize {
