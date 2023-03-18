@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
@@ -251,6 +252,8 @@ func main() {
 		e.Logger.Fatalf("missing: POST_ISUCONDITION_TARGET_BASE_URL")
 		return
 	}
+
+	processConditionQueue()
 
 	serverPort := fmt.Sprintf(":%v", getEnv("SERVER_APP_PORT", "3000"))
 	e.Logger.Fatal(e.Start(serverPort))
@@ -1135,6 +1138,11 @@ func getTrend(c echo.Context) error {
 	return c.JSON(http.StatusOK, res)
 }
 
+var conditionQueue = struct {
+	sync.Mutex
+	Data []IsuCondition
+}{}
+
 // POST /api/condition/:jia_isu_uuid
 // ISUからのコンディションを受け取る
 func postIsuCondition(c echo.Context) error {
@@ -1166,7 +1174,7 @@ func postIsuCondition(c echo.Context) error {
 	defer tx.Rollback()
 
 	var count int
-	err = tx.Get(&count, "SELECT COUNT(*) FROM `isu` WHERE `jia_isu_uuid` = ?", jiaIsuUUID)
+	err = tx.Get(&count, "SELECT COUNT(*) FROM `isu` WHERE `jia_isu_uuid` = ? LIMIT 1", jiaIsuUUID)
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
@@ -1175,32 +1183,67 @@ func postIsuCondition(c echo.Context) error {
 		return c.String(http.StatusNotFound, "not found: isu")
 	}
 
-	for _, cond := range req {
-		timestamp := time.Unix(cond.Timestamp, 0)
-
-		if !isValidConditionFormat(cond.Condition) {
-			return c.String(http.StatusBadRequest, "bad request body")
-		}
-
-		_, err = tx.Exec(
-			"INSERT INTO `isu_condition`"+
-				"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
-				"	VALUES (?, ?, ?, ?, ?)",
-			jiaIsuUUID, timestamp, cond.IsSitting, cond.Condition, cond.Message)
-		if err != nil {
-			c.Logger().Errorf("db error: %v", err)
-			return c.NoContent(http.StatusInternalServerError)
-		}
-
-	}
-
 	err = tx.Commit()
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
+	conditionQueue.Lock()
+	for _, cond := range req {
+		timestamp := time.Unix(cond.Timestamp, 0)
+		if !isValidConditionFormat(cond.Condition) {
+			conditionQueue.Unlock()
+			return c.String(http.StatusBadRequest, "bad request body")
+		}
+		conditionQueue.Data = append(conditionQueue.Data, IsuCondition{
+			JIAIsuUUID: jiaIsuUUID,
+			Timestamp:  timestamp,
+			IsSitting:  cond.IsSitting,
+			Condition:  cond.Condition,
+			Message:    cond.Message,
+		})
+	}
+	conditionQueue.Unlock()
+
 	return c.NoContent(http.StatusAccepted)
+}
+
+func processConditionQueue() {
+	for {
+		time.Sleep(5 * time.Second) // 一定間隔で実行
+
+		conditionQueue.Lock()
+		if len(conditionQueue.Data) == 0 {
+			conditionQueue.Unlock()
+			continue
+		}
+
+		tx, err := db.Beginx()
+		if err != nil {
+			conditionQueue.Unlock()
+			continue
+		}
+
+		_, err = tx.NamedExec(
+			"INSERT INTO `isu_condition`"+
+				"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
+				"	VALUES (:jia_isu_uuid, :timestamp, :is_sitting, :condition, :message)",
+			conditionQueue.Data)
+		if err != nil {
+			conditionQueue.Unlock()
+			continue
+		}
+
+		err = tx.Commit()
+		if err != nil {
+			conditionQueue.Unlock()
+			continue
+		}
+
+		conditionQueue.Data = conditionQueue.Data[:0] // キューをクリア
+		conditionQueue.Unlock()
+	}
 }
 
 // ISUのコンディションの文字列がcsv形式になっているか検証
