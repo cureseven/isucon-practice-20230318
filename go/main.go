@@ -52,8 +52,8 @@ var (
 
 	postIsuConditionTargetBaseURL string // JIAへのactivate時に登録する，ISUがconditionを送る先のURL
 
-	conditionMap     = map[string]IsuConditionForInsert{} // キーはJIAIsuUUID
-	conditionMapLock = sync.RWMutex{}
+	conditionsMemory = []IsuConditionForInsert{} // キーはJIAIsuUUID
+	conditionsLock   = sync.RWMutex{}
 )
 
 type Config struct {
@@ -267,6 +267,16 @@ func main() {
 
 	serverPort := fmt.Sprintf(":%v", getEnv("SERVER_APP_PORT", "3000"))
 	e.Logger.Fatal(e.Start(serverPort))
+
+	//go func() {
+	//	ticker := time.NewTicker(time.Millisecond * 500)
+	//	for {
+	//		select {
+	//		case <-ticker.C:
+	//			go BulkInsertIsuCondition(1000)
+	//		}
+	//	}
+	//}()
 }
 
 func getSession(r *http.Request) (*sessions.Session, error) {
@@ -1205,7 +1215,7 @@ func postIsuCondition(c echo.Context) error {
 	return c.NoContent(http.StatusAccepted)
 }
 
-func insertIsuConditionToMap(c echo.Context, err error, tx *sqlx.Tx, jiaIsuUUID string, req []PostIsuConditionRequest) (error, bool) {
+func insertIsuConditionToMemory(c echo.Context, err error, tx *sqlx.Tx, jiaIsuUUID string, req []PostIsuConditionRequest) (error, bool) {
 	var count int
 	err = tx.Get(&count, "SELECT COUNT(*) FROM `isu` WHERE `jia_isu_uuid` = ?", jiaIsuUUID)
 	if err != nil {
@@ -1222,15 +1232,15 @@ func insertIsuConditionToMap(c echo.Context, err error, tx *sqlx.Tx, jiaIsuUUID 
 		if !isValidConditionFormat(cond.Condition) {
 			return c.String(http.StatusBadRequest, "bad request body"), true
 		}
-		conditionMapLock.Lock()
-		conditionMap[jiaIsuUUID] = IsuConditionForInsert{
+		conditionsLock.Lock()
+		conditionsMemory = append(conditionsMemory, IsuConditionForInsert{
 			JIAIsuUUID: jiaIsuUUID,
 			Timestamp:  timestamp,
 			IsSitting:  cond.IsSitting,
 			Condition:  cond.Condition,
 			Message:    cond.Message,
-		}
-		conditionMapLock.Unlock()
+		})
+		conditionsLock.Unlock()
 	}
 
 	return nil, false
@@ -1271,6 +1281,36 @@ func insertIsuConditionToDB(c echo.Context, err error, tx *sqlx.Tx, jiaIsuUUID s
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError), true
 	}
+	return nil, false
+}
+
+func BulkInsertIsuCondition(limit int) (error, bool) {
+	conditionsLock.RLock()
+	if len(conditionsMemory) < 0 {
+		return nil, false
+	}
+	bulkLimit := limit
+	if limit > len(conditionsMemory) {
+		bulkLimit = len(conditionsMemory)
+	}
+	records := conditionsMemory[:bulkLimit]
+	insertRecords := conditionsMemory[bulkLimit:]
+	conditionsLock.RUnlock()
+
+	tx := db.MustBegin()
+	_, err := tx.NamedExec(
+		"INSERT INTO `isu_condition`"+
+			"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
+			"	VALUES (:jia_isu_uuid, :timestamp, :is_sitting, :condition, :message)",
+		records)
+	if err != nil {
+		log.Fatalf("failed to read file: %v", err)
+		return err, true
+	}
+	conditionsLock.Lock()
+	conditionsMemory = insertRecords
+	conditionsLock.Unlock()
+
 	return nil, false
 }
 
