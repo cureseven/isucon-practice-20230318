@@ -52,7 +52,7 @@ var (
 
 	postIsuConditionTargetBaseURL string // JIAへのactivate時に登録する，ISUがconditionを送る先のURL
 
-	conditionMap     = map[int]IsuCondition{}
+	conditionMap     = map[string]IsuConditionForInsert{} // キーはJIAIsuUUID
 	conditionMapLock = sync.RWMutex{}
 )
 
@@ -92,6 +92,14 @@ type IsuCondition struct {
 	Condition  string    `db:"condition"`
 	Message    string    `db:"message"`
 	CreatedAt  time.Time `db:"created_at"`
+}
+
+type IsuConditionForInsert struct {
+	JIAIsuUUID string
+	Timestamp  time.Time
+	IsSitting  bool
+	Condition  string
+	Message    string
 }
 
 type MySQLConnectionEnv struct {
@@ -1189,7 +1197,7 @@ func postIsuCondition(c echo.Context) error {
 	}
 	defer tx.Rollback()
 
-	err2, done := insertIsuCondition(c, err, tx, jiaIsuUUID, req)
+	err2, done := insertIsuConditionToDB(c, err, tx, jiaIsuUUID, req)
 	if done {
 		return err2
 	}
@@ -1197,7 +1205,38 @@ func postIsuCondition(c echo.Context) error {
 	return c.NoContent(http.StatusAccepted)
 }
 
-func insertIsuCondition(c echo.Context, err error, tx *sqlx.Tx, jiaIsuUUID string, req []PostIsuConditionRequest) (error, bool) {
+func insertIsuConditionToMap(c echo.Context, err error, tx *sqlx.Tx, jiaIsuUUID string, req []PostIsuConditionRequest) (error, bool) {
+	var count int
+	err = tx.Get(&count, "SELECT COUNT(*) FROM `isu` WHERE `jia_isu_uuid` = ?", jiaIsuUUID)
+	if err != nil {
+		c.Logger().Errorf("db error: %v", err)
+		return c.NoContent(http.StatusInternalServerError), true
+	}
+	if count == 0 {
+		return c.String(http.StatusNotFound, "not found: isu"), true
+	}
+
+	for _, cond := range req {
+		timestamp := time.Unix(cond.Timestamp, 0)
+
+		if !isValidConditionFormat(cond.Condition) {
+			return c.String(http.StatusBadRequest, "bad request body"), true
+		}
+		conditionMapLock.Lock()
+		conditionMap[jiaIsuUUID] = IsuConditionForInsert{
+			JIAIsuUUID: jiaIsuUUID,
+			Timestamp:  timestamp,
+			IsSitting:  cond.IsSitting,
+			Condition:  cond.Condition,
+			Message:    cond.Message,
+		}
+		conditionMapLock.Unlock()
+	}
+
+	return nil, false
+}
+
+func insertIsuConditionToDB(c echo.Context, err error, tx *sqlx.Tx, jiaIsuUUID string, req []PostIsuConditionRequest) (error, bool) {
 	var count int
 	err = tx.Get(&count, "SELECT COUNT(*) FROM `isu` WHERE `jia_isu_uuid` = ?", jiaIsuUUID)
 	if err != nil {
