@@ -1276,7 +1276,7 @@ func BulkInsertIsuCondition(limit int) (error, bool) {
 	records := conditionsMemory[:bulkLimit]
 	insertRecords := conditionsMemory[bulkLimit:]
 	conditionsLock.RUnlock()
-
+	log.Print("今から%s件insertするよ", len(records))
 	tx := db.MustBegin()
 	_, err := tx.NamedExec(
 		"INSERT INTO `isu_condition`"+
@@ -1285,6 +1285,7 @@ func BulkInsertIsuCondition(limit int) (error, bool) {
 		records)
 	if err != nil {
 		tx.Rollback()
+		log.Print("エラった")
 		log.Fatalf("failed to read file: %v", err)
 		return err, true
 	}
@@ -1294,6 +1295,7 @@ func BulkInsertIsuCondition(limit int) (error, bool) {
 	}
 	conditionsLock.Lock()
 	conditionsMemory = insertRecords
+	log.Print("はみ出したので%s件戻した", len(insertRecords))
 	conditionsLock.Unlock()
 
 	return nil, false
