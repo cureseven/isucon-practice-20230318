@@ -253,7 +253,7 @@ func main() {
 		return
 	}
 
-	processConditionQueue()
+	go processConditionQueue()
 
 	serverPort := fmt.Sprintf(":%v", getEnv("SERVER_APP_PORT", "3000"))
 	e.Logger.Fatal(e.Start(serverPort))
@@ -1211,7 +1211,7 @@ func postIsuCondition(c echo.Context) error {
 
 func processConditionQueue() {
 	for {
-		time.Sleep(5 * time.Second) // 一定間隔で実行
+		time.Sleep(1 * time.Second) // 一定間隔で実行
 
 		conditionQueue.Lock()
 		if len(conditionQueue.Data) == 0 {
