@@ -1031,7 +1031,7 @@ func updateTrendCache() {
 }
 
 // keyはuuid
-var IsuCache map[string]GetIsuConditionResponse
+var IsuCache []GetIsuConditionResponse
 
 func updateIsuCache() {
 	// dbからIsuをキャッシュに登録
@@ -1064,7 +1064,7 @@ SELECT
 	latest.jia_isu_uuid IS NOT NULL;
 `)
 	for _, isu := range GetIsuConditionResponseList {
-		IsuCache[isu.JIAIsuUUID] = isu
+		IsuCache = append(IsuCache, isu)
 	}
 }
 
