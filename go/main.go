@@ -1099,7 +1099,7 @@ func updateTrendCache() {
 			cacheMutex.Unlock()
 		}
 
-		time.Sleep(1 * time.Second)
+		time.Sleep(500 * time.Millisecond)
 	}
 }
 
