@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1143,6 +1144,8 @@ func getTrend(c echo.Context) error {
 		}
 		res = append(res, t)
 	}
+
+	sort.Slice(res, func(i, j int) bool { return res[i].Character < res[j].Character })
 
 	return c.JSON(http.StatusOK, res)
 }
