@@ -1121,21 +1121,21 @@ func updateTrendCache() {
 func fetchTrendData() ([]TrendResponse, error) {
 	data := make(map[string]map[string][]*TrendCondition)
 	characterList := []string{}
-	err := db.Select(&characterList, "SELECT DISTINCT `character` FROM `isu`")
+	err := replicaDb.Select(&characterList, "SELECT DISTINCT `character` FROM `isu`")
 	if err != nil {
 		return nil, err
 	}
 
 	for _, chara := range characterList {
 		isuList := []Isu{}
-		err = db.Select(&isuList, "SELECT * FROM `isu` WHERE `character` = ?", chara)
+		err = replicaDb.Select(&isuList, "SELECT * FROM `isu` WHERE `character` = ?", chara)
 		if err != nil {
 			return nil, err
 		}
 
 		for _, isu := range isuList {
 			condList := []*IsuCondition{}
-			err = db.Select(&condList,
+			err = replicaDb.Select(&condList,
 				"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY timestamp DESC LIMIT 1",
 				isu.JIAIsuUUID,
 			)
