@@ -1262,7 +1262,7 @@ func processConditionQueue() {
 	worker := func() {
 		for {
 			time.Sleep(500 * time.Millisecond)
-			log.Printf("ケンスはこれだ！", len(conditionQueue.Data))
+			log.Printf("ケンスはこれだ！1", len(conditionQueue.Data))
 			// キューの内容をローカル変数にコピー
 			conditionQueue.Lock()
 			//if len(conditionQueue.Data) < minQueueSize {
@@ -1282,6 +1282,8 @@ func processConditionQueue() {
 			if len(localQueue) == 0 {
 				continue
 			}
+
+			log.Printf("ケンスはこれだ！2", len(localQueue))
 
 			// 一時的な CSV ファイルを作成
 			tmpfile, err := os.CreateTemp("", "isu_condition_*.csv")
