@@ -259,6 +259,7 @@ func main() {
 	}
 
 	go processConditionQueue()
+	go updateTrendCache()
 
 	serverPort := fmt.Sprintf(":%v", getEnv("SERVER_APP_PORT", "3000"))
 	e.Logger.Fatal(e.Start(serverPort))
@@ -1085,23 +1086,35 @@ func calculateConditionLevel(condition string) (string, error) {
 	return conditionLevel, nil
 }
 
-// GET /api/trend
-// ISUの性格毎の最新のコンディション情報を返す
-func getTrend(c echo.Context) error {
+var cacheMutex sync.Mutex
+var trendCache []TrendResponse
+
+func updateTrendCache() {
+	for {
+		newTrendData, err := fetchTrendData()
+		if err == nil {
+			cacheMutex.Lock()
+			trendCache = newTrendData
+			cacheMutex.Unlock()
+		}
+
+		time.Sleep(1 * time.Second)
+	}
+}
+
+func fetchTrendData() ([]TrendResponse, error) {
 	data := make(map[string]map[string][]*TrendCondition)
 	characterList := []string{}
 	err := db.Select(&characterList, "SELECT DISTINCT `character` FROM `isu`")
 	if err != nil {
-		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
+		return nil, err
 	}
-
+	
 	for _, chara := range characterList {
 		isuList := []Isu{}
 		err = db.Select(&isuList, "SELECT * FROM `isu` WHERE `character` = ?", chara)
 		if err != nil {
-			c.Logger().Errorf("db error: %v", err)
-			return c.NoContent(http.StatusInternalServerError)
+			return nil, err
 		}
 
 		for _, isu := range isuList {
@@ -1111,16 +1124,14 @@ func getTrend(c echo.Context) error {
 				isu.JIAIsuUUID,
 			)
 			if err != nil {
-				c.Logger().Errorf("db error: %v", err)
-				return c.NoContent(http.StatusInternalServerError)
+				return nil, err
 			}
 			if len(condList) == 0 {
 				continue
 			}
 			conditionLevel, err := calculateConditionLevel(condList[0].Condition)
 			if err != nil {
-				c.Logger().Error(err)
-				return c.NoContent(http.StatusInternalServerError)
+				return nil, err
 			}
 			trendCond := &TrendCondition{
 				ID:        isu.ID,
@@ -1135,6 +1146,15 @@ func getTrend(c echo.Context) error {
 
 	res := []TrendResponse{}
 	for chara, trend := range data {
+		//sort.Slice(trend["info"], func(i, j int) bool {
+		//	return trend["info"][i].Timestamp > trend["info"][j].Timestamp
+		//})
+		//sort.Slice(trend["warning"], func(i, j int) bool {
+		//	return trend["warning"][i].Timestamp > trend["warning"][j].Timestamp
+		//})
+		//sort.Slice(trend["critical"], func(i, j int) bool {
+		//	return trend["critical"][i].Timestamp > trend["critical"][j].Timestamp
+		//})
 		t := TrendResponse{
 			Character: chara,
 			Info:      trend["info"],
@@ -1144,7 +1164,16 @@ func getTrend(c echo.Context) error {
 		res = append(res, t)
 	}
 
-	return c.JSON(http.StatusOK, res)
+	return res, nil
+}
+
+// GET /api/trend
+// ISUの性格毎の最新のコンディション情報を返す
+func getTrend(c echo.Context) error {
+	cacheMutex.Lock()
+	defer cacheMutex.Unlock()
+
+	return c.JSON(http.StatusOK, trendCache)
 }
 
 var conditionQueue = struct {
