@@ -1136,6 +1136,15 @@ func getTrend(c echo.Context) error {
 
 	res := []TrendResponse{}
 	for chara, trend := range data {
+		sort.Slice(trend["info"], func(i, j int) bool {
+			return trend["info"][i].Timestamp > trend["info"][j].Timestamp
+		})
+		sort.Slice(trend["warning"], func(i, j int) bool {
+			return trend["warning"][i].Timestamp > trend["warning"][j].Timestamp
+		})
+		sort.Slice(trend["critical"], func(i, j int) bool {
+			return trend["critical"][i].Timestamp > trend["critical"][j].Timestamp
+		})
 		t := TrendResponse{
 			Character: chara,
 			Info:      trend["info"],
@@ -1144,8 +1153,6 @@ func getTrend(c echo.Context) error {
 		}
 		res = append(res, t)
 	}
-
-	sort.Slice(res, func(i, j int) bool { return res[i].Character < res[j].Character })
 
 	return c.JSON(http.StatusOK, res)
 }
