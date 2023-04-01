@@ -1155,6 +1155,12 @@ var conditionQueue = struct {
 // POST /api/condition/:jia_isu_uuid
 // ISUからのコンディションを受け取る
 func postIsuCondition(c echo.Context) error {
+	//dropProbability := 0.4
+	//if rand.Float64() <= dropProbability {
+	//	c.Logger().Warnf("drop post isu condition request")
+	//	return c.NoContent(http.StatusAccepted)
+	//}
+
 	jiaIsuUUID := c.Param("jia_isu_uuid")
 	if jiaIsuUUID == "" {
 		return c.String(http.StatusBadRequest, "missing: jia_isu_uuid")
@@ -1254,6 +1260,7 @@ func processConditionQueue() {
 			csvWriter := csv.NewWriter(tmpfile)
 
 			// キューから取得したデータを CSV に書き込む
+			var records [][]string
 			for _, condition := range localQueue {
 				var isSittingInt int
 				if condition.IsSitting {
@@ -1269,10 +1276,15 @@ func processConditionQueue() {
 					condition.Message,
 					condition.Level,
 				}
-				if err := csvWriter.Write(record); err != nil {
-					log.Printf("CSV write error: %v", err)
-					break
-				}
+				records = append(records, record)
+			}
+			if len(records) == 0 {
+				csvWriter.Flush()
+				return
+			}
+			if err := csvWriter.WriteAll(records); err != nil {
+				log.Printf("CSV write error: %v", err)
+				break
 			}
 
 			// CSV ライターをフラッシュ
