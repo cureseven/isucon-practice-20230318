@@ -1261,6 +1261,7 @@ func processConditionQueue() {
 	worker := func() {
 		for {
 			time.Sleep(500 * time.Millisecond)
+			fmt.Println("ケンスはこれだ！", len(conditionQueue.Data))
 			// キューの内容をローカル変数にコピー
 			conditionQueue.Lock()
 			if len(conditionQueue.Data) < minQueueSize {
