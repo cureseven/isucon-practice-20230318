@@ -1035,12 +1035,13 @@ var IsuCache []GetIsuConditionResponse
 
 func updateIsuCache() {
 	// dbからIsuをキャッシュに登録
-	tx, _ := db.Beginx()
-	defer tx.Rollback()
-	GetIsuConditionResponseList := []GetIsuConditionResponse{}
-	_ = tx.Select(
-		&GetIsuConditionResponseList,
-		`
+	for {
+		tx, _ := db.Beginx()
+		defer tx.Rollback()
+		GetIsuConditionResponseList := []GetIsuConditionResponse{}
+		_ = tx.Select(
+			&GetIsuConditionResponseList,
+			`
 SELECT
 	i.jia_isu_uuid,
 		i.name,
@@ -1063,8 +1064,11 @@ SELECT
 	WHERE
 	latest.jia_isu_uuid IS NOT NULL;
 `)
-	for _, isu := range GetIsuConditionResponseList {
-		IsuCache = append(IsuCache, isu)
+		cacheMutex.Lock()
+		IsuCache = GetIsuConditionResponseList
+		cacheMutex.Unlock()
+
+		time.Sleep(1 * time.Second)
 	}
 }
 
