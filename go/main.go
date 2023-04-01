@@ -46,6 +46,7 @@ const (
 
 var (
 	db                  *sqlx.DB
+	replicaDb           *sqlx.DB
 	sessionStore        sessions.Store
 	mySQLConnectionData *MySQLConnectionEnv
 
@@ -94,11 +95,12 @@ type IsuCondition struct {
 }
 
 type MySQLConnectionEnv struct {
-	Host     string
-	Port     string
-	User     string
-	DBName   string
-	Password string
+	Host        string
+	ReplicaHost string
+	Port        string
+	User        string
+	DBName      string
+	Password    string
 }
 
 type InitializeRequest struct {
@@ -183,16 +185,22 @@ func getEnv(key string, defaultValue string) string {
 
 func NewMySQLConnectionEnv() *MySQLConnectionEnv {
 	return &MySQLConnectionEnv{
-		Host:     getEnv("MYSQL_HOST", "127.0.0.1"),
-		Port:     getEnv("MYSQL_PORT", "3306"),
-		User:     getEnv("MYSQL_USER", "isucon"),
-		DBName:   getEnv("MYSQL_DBNAME", "isucondition"),
-		Password: getEnv("MYSQL_PASS", "isucon"),
+		Host:        getEnv("MYSQL_HOST", "127.0.0.1"),
+		ReplicaHost: getEnv("MYSQL_REPLICA_HOST", "127.0.0.1"),
+		Port:        getEnv("MYSQL_PORT", "3306"),
+		User:        getEnv("MYSQL_USER", "isucon"),
+		DBName:      getEnv("MYSQL_DBNAME", "isucondition"),
+		Password:    getEnv("MYSQL_PASS", "isucon"),
 	}
 }
 
 func (mc *MySQLConnectionEnv) ConnectDB() (*sqlx.DB, error) {
 	dsn := fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?parseTime=true&loc=Asia%%2FTokyo&interpolateParams=true&allowAllFiles=true", mc.User, mc.Password, mc.Host, mc.Port, mc.DBName)
+	return sqlx.Open("mysql", dsn)
+}
+
+func (mc *MySQLConnectionEnv) ConnectReplicaDB() (*sqlx.DB, error) {
+	dsn := fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?parseTime=true&loc=Asia%%2FTokyo&interpolateParams=true&allowAllFiles=true", mc.User, mc.Password, mc.ReplicaHost, mc.Port, mc.DBName)
 	return sqlx.Open("mysql", dsn)
 }
 
@@ -251,6 +259,14 @@ func main() {
 	}
 	db.SetMaxOpenConns(10)
 	defer db.Close()
+
+	replicaDb, err = mySQLConnectionData.ConnectReplicaDB()
+	if err != nil {
+		e.Logger.Fatalf("failed to connect replica db: %v", err)
+		return
+	}
+	replicaDb.SetMaxOpenConns(10)
+	defer replicaDb.Close()
 
 	postIsuConditionTargetBaseURL = os.Getenv("POST_ISUCONDITION_TARGET_BASE_URL")
 	if postIsuConditionTargetBaseURL == "" {
@@ -747,7 +763,7 @@ func getIsuGraph(c echo.Context) error {
 	}
 	date := time.Unix(datetimeInt64, 0).Truncate(time.Hour)
 
-	tx, err := db.Beginx()
+	tx, err := replicaDb.Beginx()
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
