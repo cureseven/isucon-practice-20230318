@@ -1264,10 +1264,10 @@ func processConditionQueue() {
 			log.Printf("ケンスはこれだ！", len(conditionQueue.Data))
 			// キューの内容をローカル変数にコピー
 			conditionQueue.Lock()
-			if len(conditionQueue.Data) < minQueueSize {
-				conditionQueue.Unlock()
-				continue
-			}
+			//if len(conditionQueue.Data) < minQueueSize {
+			//	conditionQueue.Unlock()
+			//	continue
+			//}
 			localQueue := make([]IsuCondition, len(conditionQueue.Data))
 			copy(localQueue, conditionQueue.Data)
 			conditionQueue.Data = make([]IsuCondition, 0) // キューをクリア
