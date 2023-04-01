@@ -1254,6 +1254,7 @@ func postIsuCondition(c echo.Context) error {
 const (
 	minQueueSize = 50 // キューがこのサイズに達したときに処理を開始する
 	numWorkers   = 8  // 並列処理のためのゴルーチン数
+	maxBatchSize = 500
 )
 
 func processConditionQueue() {
@@ -1268,9 +1269,14 @@ func processConditionQueue() {
 			//	conditionQueue.Unlock()
 			//	continue
 			//}
-			localQueue := make([]IsuCondition, len(conditionQueue.Data))
-			copy(localQueue, conditionQueue.Data)
-			conditionQueue.Data = make([]IsuCondition, 0) // キューをクリア
+			localQueue := make([]IsuCondition, 0, maxBatchSize)
+			if len(conditionQueue.Data) <= maxBatchSize {
+				copy(localQueue, conditionQueue.Data)
+				conditionQueue.Data = make([]IsuCondition, 0) // キューをクリア
+			} else {
+				copy(localQueue, conditionQueue.Data[:maxBatchSize])
+				conditionQueue.Data = conditionQueue.Data[maxBatchSize:]
+			}
 			conditionQueue.Unlock()
 
 			if len(localQueue) == 0 {
