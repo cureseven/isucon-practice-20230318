@@ -1253,7 +1253,7 @@ func postIsuCondition(c echo.Context) error {
 
 const (
 	minQueueSize = 50 // キューがこのサイズに達したときに処理を開始する
-	numWorkers   = 3  // 並列処理のためのゴルーチン数
+	numWorkers   = 8  // 並列処理のためのゴルーチン数
 	maxBatchSize = 50000
 )
 
@@ -1283,7 +1283,6 @@ func processConditionQueue() {
 				}
 				conditionQueue.Unlock()
 
-				log.Printf("ケンスはこれだ！2", len(localQueue))
 				if len(localQueue) == 0 {
 					return
 				}
