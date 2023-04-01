@@ -1109,52 +1109,48 @@ func fetchTrendData() ([]TrendResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	for _, chara := range characterList {
-		isuList := []Isu{}
-		err = db.Select(&isuList, "SELECT * FROM `isu` WHERE `character` = ?", chara)
+		type LatestCondition struct {
+			Level     string    `db:"level"`
+			IsuId     int       `db:"isu_id"`
+			Timestamp time.Time `db:"t"`
+		}
+		q := `
+SELECT level,
+       isu_id,
+       t
+FROM
+  (SELECT isu.id AS isu_id,
+          isu_condition.level AS level,
+          isu_condition.timestamp AS t,
+          ROW_NUMBER() OVER (PARTITION BY isu.id
+                             ORDER BY isu_condition.timestamp DESC) AS rownum
+   FROM isu
+   INNER JOIN isu_condition ON isu_condition.jia_isu_uuid = isu.jia_isu_uuid
+   WHERE isu.character = ? ) AS t
+WHERE t.rownum = 1
+ORDER BY level;
+		`
+		var latests []LatestCondition
+		err = db.Select(&latests, q, chara)
 		if err != nil {
 			return nil, err
 		}
 
-		for _, isu := range isuList {
-			condList := []*IsuCondition{}
-			err = db.Select(&condList,
-				"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY timestamp DESC LIMIT 1",
-				isu.JIAIsuUUID,
-			)
-			if err != nil {
-				return nil, err
-			}
-			if len(condList) == 0 {
-				continue
-			}
-			conditionLevel, err := calculateConditionLevel(condList[0].Condition)
-			if err != nil {
-				return nil, err
-			}
-			trendCond := &TrendCondition{
-				ID:        isu.ID,
-				Timestamp: condList[0].Timestamp.Unix(),
-			}
-			if _, ok := data[chara]; !ok {
-				data[chara] = make(map[string][]*TrendCondition)
-			}
-			data[chara][conditionLevel] = append(data[chara][conditionLevel], trendCond)
+		if _, ok := data[chara]; !ok {
+			data[chara] = make(map[string][]*TrendCondition)
+		}
+		for _, l := range latests {
+			data[chara][l.Level] = append(data[chara][l.Level], &TrendCondition{
+				ID:        l.IsuId,
+				Timestamp: l.Timestamp.Unix(),
+			})
 		}
 	}
 
 	res := []TrendResponse{}
 	for chara, trend := range data {
-		//sort.Slice(trend["info"], func(i, j int) bool {
-		//	return trend["info"][i].Timestamp > trend["info"][j].Timestamp
-		//})
-		//sort.Slice(trend["warning"], func(i, j int) bool {
-		//	return trend["warning"][i].Timestamp > trend["warning"][j].Timestamp
-		//})
-		//sort.Slice(trend["critical"], func(i, j int) bool {
-		//	return trend["critical"][i].Timestamp > trend["critical"][j].Timestamp
-		//})
 		t := TrendResponse{
 			Character: chara,
 			Info:      trend["info"],
