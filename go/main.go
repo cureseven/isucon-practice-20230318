@@ -1268,11 +1268,13 @@ func processConditionQueue() {
 			//	conditionQueue.Unlock()
 			//	continue
 			//}
-			localQueue := make([]IsuCondition, 0, maxBatchSize)
+			var localQueue []IsuCondition
 			if len(conditionQueue.Data) <= maxBatchSize {
+				localQueue = make([]IsuCondition, len(conditionQueue.Data))
 				copy(localQueue, conditionQueue.Data)
 				conditionQueue.Data = make([]IsuCondition, 0) // キューをクリア
 			} else {
+				localQueue = make([]IsuCondition, maxBatchSize)
 				copy(localQueue, conditionQueue.Data[:maxBatchSize])
 				conditionQueue.Data = conditionQueue.Data[maxBatchSize:]
 			}
