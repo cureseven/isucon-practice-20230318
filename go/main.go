@@ -1100,7 +1100,7 @@ func updateTrendCache() {
 			cacheMutex.Unlock()
 		}
 
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(1 * time.Second)
 	}
 }
 
@@ -1186,7 +1186,7 @@ var conditionQueue = struct {
 // POST /api/condition/:jia_isu_uuid
 // ISUからのコンディションを受け取る
 func postIsuCondition(c echo.Context) error {
-	dropProbability := 0.2
+	dropProbability := 0.4
 	if rand.Float64() <= dropProbability {
 		c.Logger().Warnf("drop post isu condition request")
 		return c.NoContent(http.StatusAccepted)
