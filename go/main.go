@@ -1098,7 +1098,7 @@ func updateTrendCache() {
 			cacheMutex.Unlock()
 		}
 
-		time.Sleep(1 * time.Second)
+		time.Sleep(200 * time.Millisecond)
 	}
 }
 
@@ -1262,7 +1262,7 @@ func processConditionQueue() {
 	worker := func() {
 		for {
 
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(200 * time.Millisecond)
 			now := time.Now()
 			// キューの内容をローカル変数にコピー
 			func() { // 無名関数を追加
