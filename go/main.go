@@ -1263,76 +1263,78 @@ func processConditionQueue() {
 		for {
 			time.Sleep(500 * time.Millisecond)
 			// キューの内容をローカル変数にコピー
-			conditionQueue.Lock()
-			if len(conditionQueue.Data) < minQueueSize {
-				conditionQueue.Unlock()
-				continue
-			}
-			var localQueue []IsuCondition
-			if len(conditionQueue.Data) <= maxBatchSize {
-				localQueue = make([]IsuCondition, len(conditionQueue.Data))
-				copy(localQueue, conditionQueue.Data)
-				conditionQueue.Data = make([]IsuCondition, 0) // キューをクリア
-			} else {
-				localQueue = make([]IsuCondition, maxBatchSize)
-				copy(localQueue, conditionQueue.Data[:maxBatchSize])
-				conditionQueue.Data = conditionQueue.Data[maxBatchSize:]
-			}
-			conditionQueue.Unlock()
-
-			log.Printf("ケンスはこれだ！2", len(localQueue))
-			if len(localQueue) == 0 {
-				continue
-			}
-
-			// 一時的な CSV ファイルを作成
-			tmpfile, err := os.CreateTemp("", "isu_condition_*.csv")
-			if err != nil {
-				log.Printf("Temporary file creation failed: %v", err)
-				continue
-			}
-			defer os.Remove(tmpfile.Name())
-			defer tmpfile.Close()
-
-			// CSV ライターを作成
-			csvWriter := csv.NewWriter(tmpfile)
-
-			// キューから取得したデータを CSV に書き込む
-			var records [][]string
-			for _, condition := range localQueue {
-				var isSittingInt int
-				if condition.IsSitting {
-					isSittingInt = 1
+			func() { // 無名関数を追加
+				conditionQueue.Lock()
+				if len(conditionQueue.Data) < minQueueSize {
+					conditionQueue.Unlock()
+					return
+				}
+				var localQueue []IsuCondition
+				if len(conditionQueue.Data) <= maxBatchSize {
+					localQueue = make([]IsuCondition, len(conditionQueue.Data))
+					copy(localQueue, conditionQueue.Data)
+					conditionQueue.Data = make([]IsuCondition, 0) // キューをクリア
 				} else {
-					isSittingInt = 0
+					localQueue = make([]IsuCondition, maxBatchSize)
+					copy(localQueue, conditionQueue.Data[:maxBatchSize])
+					conditionQueue.Data = conditionQueue.Data[maxBatchSize:]
 				}
-				record := []string{
-					condition.JIAIsuUUID,
-					condition.Timestamp.Format(time.RFC3339),
-					strconv.Itoa(isSittingInt),
-					condition.Condition,
-					condition.Message,
-					condition.Level,
+				conditionQueue.Unlock()
+
+				log.Printf("ケンスはこれだ！2", len(localQueue))
+				if len(localQueue) == 0 {
+					return
 				}
-				records = append(records, record)
-			}
-			if len(records) == 0 {
+
+				// 一時的な CSV ファイルを作成
+				tmpfile, err := os.CreateTemp("", "isu_condition_*.csv")
+				if err != nil {
+					log.Printf("Temporary file creation failed: %v", err)
+					return
+				}
+				defer os.Remove(tmpfile.Name())
+				defer tmpfile.Close()
+
+				// CSV ライターを作成
+				csvWriter := csv.NewWriter(tmpfile)
+
+				// キューから取得したデータを CSV に書き込む
+				var records [][]string
+				for _, condition := range localQueue {
+					var isSittingInt int
+					if condition.IsSitting {
+						isSittingInt = 1
+					} else {
+						isSittingInt = 0
+					}
+					record := []string{
+						condition.JIAIsuUUID,
+						condition.Timestamp.Format(time.RFC3339),
+						strconv.Itoa(isSittingInt),
+						condition.Condition,
+						condition.Message,
+						condition.Level,
+					}
+					records = append(records, record)
+				}
+				if len(records) == 0 {
+					csvWriter.Flush()
+					return
+				}
+				if err := csvWriter.WriteAll(records); err != nil {
+					log.Printf("CSV write error: %v", err)
+					return
+				}
+
+				// CSV ライターをフラッシュ
 				csvWriter.Flush()
-				return
-			}
-			if err := csvWriter.WriteAll(records); err != nil {
-				log.Printf("CSV write error: %v", err)
-				break
-			}
 
-			// CSV ライターをフラッシュ
-			csvWriter.Flush()
-
-			// LOAD DATA INFILE でデータを MySQL にインポート
-			query := fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE `isu_condition` FIELDS TERMINATED BY ',' ENCLOSED BY '\"' LINES TERMINATED BY '\\n' (`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`, `level`)", tmpfile.Name())
-			if _, err = db.Exec(query); err != nil {
-				log.Printf("LOAD DATA INFILE error: %v", err)
-			}
+				// LOAD DATA INFILE でデータを MySQL にインポート
+				query := fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE `isu_condition` FIELDS TERMINATED BY ',' ENCLOSED BY '\"' LINES TERMINATED BY '\\n' (`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`, `level`)", tmpfile.Name())
+				if _, err = db.Exec(query); err != nil {
+					log.Printf("LOAD DATA INFILE error: %v", err)
+				}
+			}()
 		}
 	}
 
