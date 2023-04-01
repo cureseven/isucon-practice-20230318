@@ -1118,6 +1118,10 @@ func fetchTrendData() ([]TrendResponse, error) {
 	err = db.Select(&selectIsuList, query, args)
 	isuListKeyChar := make(map[string][]Isu, len(selectIsuList))
 	for _, i := range selectIsuList {
+		if _, ok := isuListKeyChar[i.Character]; !ok {
+			isuListKeyChar[i.Character] = []Isu{}
+		}
+
 		isuListKeyChar[i.Character] = append(isuListKeyChar[i.Character], i)
 	}
 	for _, chara := range characterList {
