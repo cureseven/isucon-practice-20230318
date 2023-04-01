@@ -1261,7 +1261,9 @@ func processConditionQueue() {
 	// キュー処理用のゴルーチンを作成
 	worker := func() {
 		for {
+
 			time.Sleep(500 * time.Millisecond)
+			now := time.Now()
 			// キューの内容をローカル変数にコピー
 			func() { // 無名関数を追加
 				conditionQueue.Lock()
@@ -1335,6 +1337,7 @@ func processConditionQueue() {
 					log.Printf("LOAD DATA INFILE error: %v", err)
 				}
 			}()
+			fmt.Printf("経過: %vms\n", time.Since(now).Milliseconds())
 		}
 	}
 
