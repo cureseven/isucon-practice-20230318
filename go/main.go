@@ -1186,7 +1186,7 @@ var conditionQueue = struct {
 // POST /api/condition/:jia_isu_uuid
 // ISUからのコンディションを受け取る
 func postIsuCondition(c echo.Context) error {
-	dropProbability := 0.4
+	dropProbability := 0.2
 	if rand.Float64() <= dropProbability {
 		c.Logger().Warnf("drop post isu condition request")
 		return c.NoContent(http.StatusAccepted)
@@ -1255,8 +1255,8 @@ func postIsuCondition(c echo.Context) error {
 
 const (
 	minQueueSize = 50 // キューがこのサイズに達したときに処理を開始する
-	numWorkers   = 8  // 並列処理のためのゴルーチン数
-	maxBatchSize = 50000
+	numWorkers   = 20 // 並列処理のためのゴルーチン数
+	maxBatchSize = 2000
 )
 
 func processConditionQueue() {
@@ -1269,10 +1269,10 @@ func processConditionQueue() {
 			// キューの内容をローカル変数にコピー
 			func() { // 無名関数を追加
 				conditionQueue.Lock()
-				if len(conditionQueue.Data) < minQueueSize {
-					conditionQueue.Unlock()
-					return
-				}
+				//if len(conditionQueue.Data) < minQueueSize {
+				//	conditionQueue.Unlock()
+				//	return
+				//}
 				var localQueue []IsuCondition
 				if len(conditionQueue.Data) <= maxBatchSize {
 					localQueue = make([]IsuCondition, len(conditionQueue.Data))
