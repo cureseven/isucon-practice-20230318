@@ -1254,7 +1254,7 @@ func postIsuCondition(c echo.Context) error {
 const (
 	minQueueSize = 50 // キューがこのサイズに達したときに処理を開始する
 	numWorkers   = 3  // 並列処理のためのゴルーチン数
-	maxBatchSize = 10000
+	maxBatchSize = 50000
 )
 
 func processConditionQueue() {
