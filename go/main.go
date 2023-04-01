@@ -260,6 +260,7 @@ func main() {
 
 	go processConditionQueue()
 	go updateTrendCache()
+	go updateIsuCache()
 
 	serverPort := fmt.Sprintf(":%v", getEnv("SERVER_APP_PORT", "3000"))
 	e.Logger.Fatal(e.Start(serverPort))
@@ -450,83 +451,10 @@ func getMe(c echo.Context) error {
 // GET /api/isu
 // ISUの一覧を取得
 func getIsuList(c echo.Context) error {
-	jiaUserID, errStatusCode, err := getUserIDFromSession(c)
-	if err != nil {
-		if errStatusCode == http.StatusUnauthorized {
-			return c.String(http.StatusUnauthorized, "you are not signed in")
-		}
+	cacheMutex.Lock()
+	defer cacheMutex.Unlock()
 
-		c.Logger().Error(err)
-		return c.NoContent(http.StatusInternalServerError)
-	}
-
-	tx, err := db.Beginx()
-	if err != nil {
-		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
-	}
-	defer tx.Rollback()
-
-	isuList := []Isu{}
-	err = tx.Select(
-		&isuList,
-		"SELECT * FROM `isu` WHERE `jia_user_id` = ? ORDER BY `id` DESC",
-		jiaUserID)
-	if err != nil {
-		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
-	}
-
-	responseList := []GetIsuListResponse{}
-	for _, isu := range isuList {
-		var lastCondition IsuCondition
-		foundLastCondition := true
-		err = tx.Get(&lastCondition, "SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY `timestamp` DESC LIMIT 1",
-			isu.JIAIsuUUID)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				foundLastCondition = false
-			} else {
-				c.Logger().Errorf("db error: %v", err)
-				return c.NoContent(http.StatusInternalServerError)
-			}
-		}
-
-		var formattedCondition *GetIsuConditionResponse
-		if foundLastCondition {
-			conditionLevel, err := calculateConditionLevel(lastCondition.Condition)
-			if err != nil {
-				c.Logger().Error(err)
-				return c.NoContent(http.StatusInternalServerError)
-			}
-
-			formattedCondition = &GetIsuConditionResponse{
-				JIAIsuUUID:     lastCondition.JIAIsuUUID,
-				IsuName:        isu.Name,
-				Timestamp:      lastCondition.Timestamp.Unix(),
-				IsSitting:      lastCondition.IsSitting,
-				Condition:      lastCondition.Condition,
-				ConditionLevel: conditionLevel,
-				Message:        lastCondition.Message,
-			}
-		}
-
-		res := GetIsuListResponse{
-			ID:                 isu.ID,
-			JIAIsuUUID:         isu.JIAIsuUUID,
-			Name:               isu.Name,
-			Character:          isu.Character,
-			LatestIsuCondition: formattedCondition}
-		responseList = append(responseList, res)
-	}
-
-	err = tx.Commit()
-	if err != nil {
-		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
-	}
-
-	return c.JSON(http.StatusOK, responseList)
+	return c.JSON(http.StatusOK, IsuCache)
 }
 
 // POST /api/isu
@@ -1099,6 +1027,44 @@ func updateTrendCache() {
 		}
 
 		time.Sleep(1 * time.Second)
+	}
+}
+
+// keyはuuid
+var IsuCache map[string]GetIsuConditionResponse
+
+func updateIsuCache() {
+	// dbからIsuをキャッシュに登録
+	tx, _ := db.Beginx()
+	defer tx.Rollback()
+	GetIsuConditionResponseList := []GetIsuConditionResponse{}
+	_ = tx.Select(
+		&GetIsuConditionResponseList,
+		`
+SELECT
+	i.jia_isu_uuid,
+		i.name,
+		c.timestamp,
+		c.is_sitting,
+		c.condition,
+		c.message
+	FROM
+	isu i
+	LEFT JOIN (
+		SELECT
+	jia_isu_uuid,
+		MAX(timestamp) as max_timestamp
+	FROM
+	isu_condition
+	GROUP BY
+	jia_isu_uuid
+	) as latest ON i.jia_isu_uuid = latest.jia_isu_uuid
+	INNER JOIN isu_condition c ON latest.jia_isu_uuid = c.jia_isu_uuid AND latest.max_timestamp = c.timestamp
+	WHERE
+	latest.jia_isu_uuid IS NOT NULL;
+`)
+	for _, isu := range GetIsuConditionResponseList {
+		IsuCache[isu.JIAIsuUUID] = isu
 	}
 }
 
