@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"database/sql"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"math/rand"
 	"net/http"
 	"os"
 	"os/exec"
@@ -88,6 +88,7 @@ type IsuCondition struct {
 	Timestamp  time.Time `db:"timestamp"`
 	IsSitting  bool      `db:"is_sitting"`
 	Condition  string    `db:"condition"`
+	Level      string    `db:"level"`
 	Message    string    `db:"message"`
 	CreatedAt  time.Time `db:"created_at"`
 }
@@ -191,7 +192,7 @@ func NewMySQLConnectionEnv() *MySQLConnectionEnv {
 }
 
 func (mc *MySQLConnectionEnv) ConnectDB() (*sqlx.DB, error) {
-	dsn := fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?parseTime=true&loc=Asia%%2FTokyo&interpolateParams=true", mc.User, mc.Password, mc.Host, mc.Port, mc.DBName)
+	dsn := fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?parseTime=true&loc=Asia%%2FTokyo&interpolateParams=true&allowAllFiles=true", mc.User, mc.Password, mc.Host, mc.Port, mc.DBName)
 	return sqlx.Open("mysql", dsn)
 }
 
@@ -214,8 +215,6 @@ func main() {
 	}()
 
 	e := echo.New()
-	e.Debug = true
-	e.Logger.SetLevel(log.DEBUG)
 
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
@@ -286,7 +285,7 @@ func getUserIDFromSession(c echo.Context) (string, int, error) {
 	jiaUserID := _jiaUserID.(string)
 	var count int
 
-	err = db.Get(&count, "SELECT COUNT(*) FROM `user` WHERE `jia_user_id` = ?",
+	err = db.Get(&count, "SELECT COUNT(*) FROM `user` WHERE `jia_user_id` = ? LIMIT 1",
 		jiaUserID)
 	if err != nil {
 		return "", http.StatusInternalServerError, fmt.Errorf("db error: %v", err)
@@ -755,7 +754,7 @@ func getIsuGraph(c echo.Context) error {
 	defer tx.Rollback()
 
 	var count int
-	err = tx.Get(&count, "SELECT COUNT(*) FROM `isu` WHERE `jia_user_id` = ? AND `jia_isu_uuid` = ?",
+	err = tx.Get(&count, "SELECT COUNT(*) FROM `isu` WHERE `jia_user_id` = ? AND `jia_isu_uuid` = ? LIMIT 1",
 		jiaUserID, jiaIsuUUID)
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
@@ -1014,52 +1013,54 @@ func getIsuConditions(c echo.Context) error {
 func getIsuConditionsFromDB(db *sqlx.DB, jiaIsuUUID string, endTime time.Time, conditionLevel map[string]interface{}, startTime time.Time,
 	limit int, isuName string) ([]*GetIsuConditionResponse, error) {
 
+	conditionLevelArray := []string{}
+	for level, _ := range conditionLevel {
+		conditionLevelArray = append(conditionLevelArray, level)
+	}
+
 	conditions := []IsuCondition{}
+	var query string
+	var params []interface{}
 	var err error
 
 	if startTime.IsZero() {
-		err = db.Select(&conditions,
+		query, params, err = sqlx.In(
 			"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ?"+
 				"	AND `timestamp` < ?"+
-				"	ORDER BY `timestamp` DESC",
-			jiaIsuUUID, endTime,
+				"	AND `level` IN (?)"+
+				"	ORDER BY `timestamp` DESC LIMIT ?",
+			jiaIsuUUID, endTime, conditionLevelArray, limit,
 		)
 	} else {
-		err = db.Select(&conditions,
+		query, params, err = sqlx.In(
 			"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ?"+
 				"	AND `timestamp` < ?"+
 				"	AND ? <= `timestamp`"+
-				"	ORDER BY `timestamp` DESC",
-			jiaIsuUUID, endTime, startTime,
+				"   AND `level` IN (?)"+
+				"	ORDER BY `timestamp` DESC LIMIT ?",
+			jiaIsuUUID, endTime, startTime, conditionLevelArray, limit,
 		)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("db error: %v", err)
 	}
+	err = db.Select(&conditions, db.Rebind(query), params...)
+	if err != nil {
+		return nil, err
+	}
 
 	conditionsResponse := []*GetIsuConditionResponse{}
 	for _, c := range conditions {
-		cLevel, err := calculateConditionLevel(c.Condition)
-		if err != nil {
-			continue
+		data := GetIsuConditionResponse{
+			JIAIsuUUID:     c.JIAIsuUUID,
+			IsuName:        isuName,
+			Timestamp:      c.Timestamp.Unix(),
+			IsSitting:      c.IsSitting,
+			Condition:      c.Condition,
+			ConditionLevel: c.Level,
+			Message:        c.Message,
 		}
-
-		if _, ok := conditionLevel[cLevel]; ok {
-			data := GetIsuConditionResponse{
-				JIAIsuUUID:     c.JIAIsuUUID,
-				IsuName:        isuName,
-				Timestamp:      c.Timestamp.Unix(),
-				IsSitting:      c.IsSitting,
-				Condition:      c.Condition,
-				ConditionLevel: cLevel,
-				Message:        c.Message,
-			}
-			conditionsResponse = append(conditionsResponse, &data)
-		}
-	}
-
-	if len(conditionsResponse) > limit {
-		conditionsResponse = conditionsResponse[:limit]
+		conditionsResponse = append(conditionsResponse, &data)
 	}
 
 	return conditionsResponse, nil
@@ -1154,13 +1155,6 @@ var conditionQueue = struct {
 // POST /api/condition/:jia_isu_uuid
 // ISUからのコンディションを受け取る
 func postIsuCondition(c echo.Context) error {
-	// TODO: 一定割合リクエストを落としてしのぐようにしたが、本来は全量さばけるようにすべき
-	dropProbability := 0.4
-	if rand.Float64() <= dropProbability {
-		c.Logger().Warnf("drop post isu condition request")
-		return c.NoContent(http.StatusAccepted)
-	}
-
 	jiaIsuUUID := c.Param("jia_isu_uuid")
 	if jiaIsuUUID == "" {
 		return c.String(http.StatusBadRequest, "missing: jia_isu_uuid")
@@ -1204,12 +1198,17 @@ func postIsuCondition(c echo.Context) error {
 			conditionQueue.Unlock()
 			return c.String(http.StatusBadRequest, "bad request body")
 		}
+		cLevel, err := calculateConditionLevel(cond.Condition)
+		if err != nil {
+			return c.String(http.StatusBadRequest, "bad request body")
+		}
 		conditionQueue.Data = append(conditionQueue.Data, IsuCondition{
 			JIAIsuUUID: jiaIsuUUID,
 			Timestamp:  timestamp,
 			IsSitting:  cond.IsSitting,
 			Condition:  cond.Condition,
 			Message:    cond.Message,
+			Level:      cLevel,
 		})
 	}
 	conditionQueue.Unlock()
@@ -1217,42 +1216,79 @@ func postIsuCondition(c echo.Context) error {
 	return c.NoContent(http.StatusAccepted)
 }
 
+const (
+	minQueueSize = 50 // キューがこのサイズに達したときに処理を開始する
+	numWorkers   = 8  // 並列処理のためのゴルーチン数
+)
+
 func processConditionQueue() {
-	for {
-		time.Sleep(200 * time.Millisecond) // 一定間隔で実行
-
-		// キューの内容をローカル変数にコピー
-		conditionQueue.Lock()
-		localQueue := make([]IsuCondition, len(conditionQueue.Data))
-		copy(localQueue, conditionQueue.Data)
-		conditionQueue.Data = make([]IsuCondition, 0) // キューをクリア
-		conditionQueue.Unlock()
-
-		if len(localQueue) == 0 {
-			continue
-		}
-
-		tx, err := db.Beginx()
-		if err == nil {
-			_, err = tx.NamedExec(
-				"INSERT INTO `isu_condition`"+
-					"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
-					"	VALUES (:jia_isu_uuid, :timestamp, :is_sitting, :condition, :message)",
-				localQueue)
-			if err == nil {
-				err = tx.Commit()
-			}
-			if err != nil {
-				tx.Rollback()
-			}
-		}
-
-		// エラーがあれば、失敗した条件を再度キューに追加
-		if err != nil {
+	// キュー処理用のゴルーチンを作成
+	worker := func() {
+		for {
+			time.Sleep(500 * time.Millisecond)
+			// キューの内容をローカル変数にコピー
 			conditionQueue.Lock()
-			conditionQueue.Data = append(conditionQueue.Data, localQueue...)
+			if len(conditionQueue.Data) < minQueueSize {
+				conditionQueue.Unlock()
+				continue
+			}
+			localQueue := make([]IsuCondition, len(conditionQueue.Data))
+			copy(localQueue, conditionQueue.Data)
+			conditionQueue.Data = make([]IsuCondition, 0) // キューをクリア
 			conditionQueue.Unlock()
+
+			if len(localQueue) == 0 {
+				continue
+			}
+
+			// 一時的な CSV ファイルを作成
+			tmpfile, err := os.CreateTemp("", "isu_condition_*.csv")
+			if err != nil {
+				log.Printf("Temporary file creation failed: %v", err)
+				continue
+			}
+			defer os.Remove(tmpfile.Name())
+			defer tmpfile.Close()
+
+			// CSV ライターを作成
+			csvWriter := csv.NewWriter(tmpfile)
+
+			// キューから取得したデータを CSV に書き込む
+			for _, condition := range localQueue {
+				var isSittingInt int
+				if condition.IsSitting {
+					isSittingInt = 1
+				} else {
+					isSittingInt = 0
+				}
+				record := []string{
+					condition.JIAIsuUUID,
+					condition.Timestamp.Format(time.RFC3339),
+					strconv.Itoa(isSittingInt),
+					condition.Condition,
+					condition.Message,
+					condition.Level,
+				}
+				if err := csvWriter.Write(record); err != nil {
+					log.Printf("CSV write error: %v", err)
+					break
+				}
+			}
+
+			// CSV ライターをフラッシュ
+			csvWriter.Flush()
+
+			// LOAD DATA INFILE でデータを MySQL にインポート
+			query := fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE `isu_condition` FIELDS TERMINATED BY ',' ENCLOSED BY '\"' LINES TERMINATED BY '\\n' (`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`, `level`)", tmpfile.Name())
+			if _, err = db.Exec(query); err != nil {
+				log.Printf("LOAD DATA INFILE error: %v", err)
+			}
 		}
+	}
+
+	// ゴルーチンを並列で実行
+	for i := 0; i < numWorkers; i++ {
+		go worker()
 	}
 }
 
