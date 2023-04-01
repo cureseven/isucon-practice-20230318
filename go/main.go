@@ -1186,7 +1186,7 @@ var conditionQueue = struct {
 // POST /api/condition/:jia_isu_uuid
 // ISUからのコンディションを受け取る
 func postIsuCondition(c echo.Context) error {
-	dropProbability := 0.4
+	dropProbability := 0.9
 	if rand.Float64() <= dropProbability {
 		c.Logger().Warnf("drop post isu condition request")
 		return c.NoContent(http.StatusAccepted)
@@ -1263,7 +1263,6 @@ func processConditionQueue() {
 	// キュー処理用のゴルーチンを作成
 	worker := func() {
 		for {
-
 			time.Sleep(500 * time.Millisecond)
 			now := time.Now()
 			// キューの内容をローカル変数にコピー
