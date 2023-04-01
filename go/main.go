@@ -1110,13 +1110,19 @@ func fetchTrendData() ([]TrendResponse, error) {
 		return nil, err
 	}
 
+	query, args, err := sqlx.In("SELECT * FROM `isu` WHERE `character` IN (?)", characterList)
+	if err != nil {
+		return nil, err
+	}
+	selectIsuList := []Isu{}
+	err = db.Select(&selectIsuList, query, args)
+	isuListKeyChar := make(map[string][]Isu, len(selectIsuList))
+	for _, i := range selectIsuList {
+		isuListKeyChar[i.Character] = append(isuListKeyChar[i.Character], i)
+	}
 	for _, chara := range characterList {
 		isuList := []Isu{}
-		err = db.Select(&isuList, "SELECT * FROM `isu` WHERE `character` = ?", chara)
-		if err != nil {
-			return nil, err
-		}
-
+		isuList = isuListKeyChar[chara]
 		for _, isu := range isuList {
 			condList := []*IsuCondition{}
 			err = db.Select(&condList,
