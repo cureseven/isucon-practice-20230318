@@ -46,6 +46,7 @@ const (
 
 var (
 	db                  *sqlx.DB
+	replicaDb           *sqlx.DB
 	sessionStore        sessions.Store
 	mySQLConnectionData *MySQLConnectionEnv
 
@@ -94,11 +95,12 @@ type IsuCondition struct {
 }
 
 type MySQLConnectionEnv struct {
-	Host     string
-	Port     string
-	User     string
-	DBName   string
-	Password string
+	Host        string
+	ReplicaHost string
+	Port        string
+	User        string
+	DBName      string
+	Password    string
 }
 
 type InitializeRequest struct {
@@ -183,16 +185,22 @@ func getEnv(key string, defaultValue string) string {
 
 func NewMySQLConnectionEnv() *MySQLConnectionEnv {
 	return &MySQLConnectionEnv{
-		Host:     getEnv("MYSQL_HOST", "127.0.0.1"),
-		Port:     getEnv("MYSQL_PORT", "3306"),
-		User:     getEnv("MYSQL_USER", "isucon"),
-		DBName:   getEnv("MYSQL_DBNAME", "isucondition"),
-		Password: getEnv("MYSQL_PASS", "isucon"),
+		Host:        getEnv("MYSQL_HOST", "127.0.0.1"),
+		ReplicaHost: getEnv("MYSQL_REPLICA_HOST", "127.0.0.1"),
+		Port:        getEnv("MYSQL_PORT", "3306"),
+		User:        getEnv("MYSQL_USER", "isucon"),
+		DBName:      getEnv("MYSQL_DBNAME", "isucondition"),
+		Password:    getEnv("MYSQL_PASS", "isucon"),
 	}
 }
 
 func (mc *MySQLConnectionEnv) ConnectDB() (*sqlx.DB, error) {
 	dsn := fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?parseTime=true&loc=Asia%%2FTokyo&interpolateParams=true&allowAllFiles=true", mc.User, mc.Password, mc.Host, mc.Port, mc.DBName)
+	return sqlx.Open("mysql", dsn)
+}
+
+func (mc *MySQLConnectionEnv) ConnectReplicaDB() (*sqlx.DB, error) {
+	dsn := fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?parseTime=true&loc=Asia%%2FTokyo&interpolateParams=true&allowAllFiles=true", mc.User, mc.Password, mc.ReplicaHost, mc.Port, mc.DBName)
 	return sqlx.Open("mysql", dsn)
 }
 
@@ -252,6 +260,14 @@ func main() {
 	db.SetMaxOpenConns(10)
 	defer db.Close()
 
+	replicaDb, err = mySQLConnectionData.ConnectReplicaDB()
+	if err != nil {
+		e.Logger.Fatalf("failed to connect replica db: %v", err)
+		return
+	}
+	replicaDb.SetMaxOpenConns(10)
+	defer replicaDb.Close()
+
 	postIsuConditionTargetBaseURL = os.Getenv("POST_ISUCONDITION_TARGET_BASE_URL")
 	if postIsuConditionTargetBaseURL == "" {
 		e.Logger.Fatalf("missing: POST_ISUCONDITION_TARGET_BASE_URL")
@@ -286,7 +302,7 @@ func getUserIDFromSession(c echo.Context) (string, int, error) {
 	jiaUserID := _jiaUserID.(string)
 	var count int
 
-	err = db.Get(&count, "SELECT COUNT(*) FROM `user` WHERE `jia_user_id` = ? LIMIT 1",
+	err = replicaDb.Get(&count, "SELECT COUNT(*) FROM `user` WHERE `jia_user_id` = ? LIMIT 1",
 		jiaUserID)
 	if err != nil {
 		return "", http.StatusInternalServerError, fmt.Errorf("db error: %v", err)
@@ -460,7 +476,7 @@ func getIsuList(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	tx, err := db.Beginx()
+	tx, err := replicaDb.Beginx()
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
@@ -679,7 +695,7 @@ func getIsuID(c echo.Context) error {
 	jiaIsuUUID := c.Param("jia_isu_uuid")
 
 	var res Isu
-	err = db.Get(&res, "SELECT * FROM `isu` WHERE `jia_user_id` = ? AND `jia_isu_uuid` = ?",
+	err = replicaDb.Get(&res, "SELECT * FROM `isu` WHERE `jia_user_id` = ? AND `jia_isu_uuid` = ?",
 		jiaUserID, jiaIsuUUID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -709,7 +725,7 @@ func getIsuIcon(c echo.Context) error {
 	jiaIsuUUID := c.Param("jia_isu_uuid")
 
 	var image []byte
-	err = db.Get(&image, "SELECT `image` FROM `isu` WHERE `jia_user_id` = ? AND `jia_isu_uuid` = ?",
+	err = replicaDb.Get(&image, "SELECT `image` FROM `isu` WHERE `jia_user_id` = ? AND `jia_isu_uuid` = ?",
 		jiaUserID, jiaIsuUUID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -747,7 +763,7 @@ func getIsuGraph(c echo.Context) error {
 	}
 	date := time.Unix(datetimeInt64, 0).Truncate(time.Hour)
 
-	tx, err := db.Beginx()
+	tx, err := replicaDb.Beginx()
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
@@ -989,7 +1005,7 @@ func getIsuConditions(c echo.Context) error {
 	}
 
 	var isuName string
-	err = db.Get(&isuName,
+	err = replicaDb.Get(&isuName,
 		"SELECT name FROM `isu` WHERE `jia_isu_uuid` = ? AND `jia_user_id` = ?",
 		jiaIsuUUID, jiaUserID,
 	)
@@ -1002,7 +1018,7 @@ func getIsuConditions(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	conditionsResponse, err := getIsuConditionsFromDB(db, jiaIsuUUID, endTime, conditionLevel, startTime, conditionLimit, isuName)
+	conditionsResponse, err := getIsuConditionsFromDB(replicaDb, jiaIsuUUID, endTime, conditionLevel, startTime, conditionLimit, isuName)
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
@@ -1105,21 +1121,21 @@ func updateTrendCache() {
 func fetchTrendData() ([]TrendResponse, error) {
 	data := make(map[string]map[string][]*TrendCondition)
 	characterList := []string{}
-	err := db.Select(&characterList, "SELECT DISTINCT `character` FROM `isu`")
+	err := replicaDb.Select(&characterList, "SELECT DISTINCT `character` FROM `isu`")
 	if err != nil {
 		return nil, err
 	}
 
 	for _, chara := range characterList {
 		isuList := []Isu{}
-		err = db.Select(&isuList, "SELECT * FROM `isu` WHERE `character` = ?", chara)
+		err = replicaDb.Select(&isuList, "SELECT * FROM `isu` WHERE `character` = ?", chara)
 		if err != nil {
 			return nil, err
 		}
 
 		for _, isu := range isuList {
 			condList := []*IsuCondition{}
-			err = db.Select(&condList,
+			err = replicaDb.Select(&condList,
 				"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY timestamp DESC LIMIT 1",
 				isu.JIAIsuUUID,
 			)
